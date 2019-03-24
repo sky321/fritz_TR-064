@@ -18,9 +18,9 @@
 # Variablen #
 ###=======###
 
-IPS="fritz.box"
+IPS="192.168.0.1"
 
-FRITZUSER=""
+FRITZUSER="dslf-config"
 FRITZPW="passwort-weboberflaeche"
 
 ###====###
