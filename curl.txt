@@ -1,0 +1,3 @@
+curl -k --anyauth -u "USER:PASS" "http://fritz.box:49000/upnp/control/wanpppconn1" -H 'Content-Type: text/xml; charset="utf-8"' -H 'SOAPAction:urn:dslforum-org:service:WANPPPConnection:1#AddPortMapping' --data-binary @request.xml
+
+curl -k --anyauth -u "dslf-config:passwd" "https://fritz.box:49443/upnp/control/wanpppconn1" -H 'Content-Type: text/xml; charset="utf-8"' -H 'SOAPAction:urn:dslforum-org:service:WANPPPConnection:1#AddPortMapping' --data-binary @request.xml

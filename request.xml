@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?><s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/" s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
+  <s:Body>
+    <u:AddPortMapping xmlns:u="urn:dslforum-org:service:WANPPPConnection:1">
+      <NewRemoteHost>0.0.0.0</NewRemoteHost>
+      <NewLeaseDuration>0</NewLeaseDuration>
+      <NewEnabled>1</NewEnabled>
+      <NewInternalClient>192.168.1.10</NewInternalClient>
+      <NewExternalPort>25000</NewExternalPort>
+      <NewProtocol>TCP</NewProtocol>
+      <NewInternalPort>25000</NewInternalPort>
+      <NewPortMappingDescription>Testmapping</NewPortMappingDescription>
+    </u:AddPortMapping>
+  </s:Body>
+</s:Envelope>

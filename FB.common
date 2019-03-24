@@ -1,0 +1,193 @@
+#!/bin/sh
+# FB.common
+# Version 0.1.6
+# ----------------------------------------------------------------------
+common_Version="v0.1.6"
+# ----------------------------------------------------------------------
+
+# Config-Methode und Login
+if [ "$1" = "x" ]; then								# sh FB-AHA.sh {x [IP] [user] [pwd]} ...
+	IP=$2
+	user=$3
+	pwd=$4
+	CONFIGFILE="Konfiguration ueber Aufruf"
+	shift #$1
+	shift #$2
+	shift #$3
+	shift #$4
+elif [ "$1" = "y" ]; then							# sh FB-AHA.sh {y [IP]} ... -> user und pwd wird aus der config genommen
+	CONFIGFILE="$ADDONDIR/user/FB.cfg"
+	. $CONFIGFILE
+	IP=$2
+	shift #$1
+	shift #$2
+else											
+	CONFIGFILE="$ADDONDIR/user/FB.cfg"
+	. $CONFIGFILE
+fi
+
+if [ "$user" = "" ]; then
+	user_chk="nicht gesetzt"
+elif [ "$user" != "" ] && [ "$Debug" = "1" ]; then
+	user_chk="gesetzt"
+elif [ "$user" != "" ] && [ "$Debug" = "2" ]; then
+	user_chk="$user"
+fi
+
+if [ "$pwd" = "" ]; then
+	EndFritzBoxSkript 1 "Passwort-nicht-gesetzt-CONF-Datei-pruefen"
+	pwd_chk="nicht gesetzt"
+elif [ "$pwd" != "" ] && [ "$Debug" = "1" ]; then
+	pwd_chk="gesetzt"
+elif [ "$pwd" != "" ] && [ "$Debug" = "2" ]; then
+	pwd_chk="$pwd"
+fi
+if [ "$RANDOM" != "" ]; then
+	CCU="CCU2"
+else
+	CCU="CCU1"
+fi
+export LD_LIBRARY_PATH=$ADDONDIR
+
+HOMEMATIC="127.0.0.1"
+cURL='/usr/local/addons/cuxd/curl'
+cURL_timout="-m 5"
+
+temp="/tmp"
+DebugFile="$temp/$script@$IP-debug.log"
+
+Debugmsg1=$Debugmsg1"Parameter FritzBox      : $IP \n"
+Debugmsg1=$Debugmsg1"Parameter Username      : $user_chk \n"
+Debugmsg1=$Debugmsg1"Parameter Passwd        : $pwd_chk \n"
+Debugmsg1=$Debugmsg1"Parameter HM $CCU       : $HOMEMATIC \n"
+Debugmsg1=$Debugmsg1"Parameter ADDONDIR      : $ADDONDIR \n"
+Debugmsg1=$Debugmsg1"Parameter COMMON        : $COMMON - $common_Version\n"
+Debugmsg1=$Debugmsg1"Parameter CONFIGFILE    : $CONFIGFILE - $config_Version\n"
+Debugmsg1=$Debugmsg1"Parameter Debug         : $DebugFile \n\n"
+
+EndFritzBoxSkript() {
+	local exitcode=$1
+	local debugmessage=$2
+	get_Box_info
+	if [ $Debug = "1" ]; then
+# Ausgabe in Komandozeile
+		echo -e "EndFritzBoxSkript() 
+		EXITCODE: $exitcode
+		MESSAGE : $debugmessage
+
+$Debugmsg        
+Messages captured:
+FritzBox Version        : $box
+$Debugmsg1"
+# Logging in Debugfile
+		echo -e "$0 EndFritzBoxSkript()
+		EXITCODE: $exitcode
+		MESSAGE : $debugmessage
+
+$Debugmsg
+FritzBox Version        : $box
+LOGGING Messages captured: 
+$Debugmsg1" > $DebugFile
+	
+	elif [ $Debug = "2" ]; then
+# Ausgabe in Komandozeile
+		echo -e "EndFritzBoxSkript() 
+		EXITCODE: $exitcode
+		MESSAGE : $debugmessage
+
+$Debugmsg
+*** Messages DebugLevel-1:
+FritzBox Version        : $box
+$Debugmsg1
+*** Messages DebugLevel-2:
+$Debugmsg2
+*************************"
+# Logging in Debugfile
+		echo -e "$0 EndFritzBoxSkript()
+		EXITCODE: $exitcode
+		MESSAGE : $debugmessage
+
+$Debugmsg
+LOGGING Messages DebugLevel-1:
+FritzBox Version        : $box
+$Debugmsg1
+LOGGING Messages DebugLevel-2: 
+$Debugmsg2" > $DebugFile
+	
+	fi
+	echo $exitcode $debugmessage
+	exit $exitcode
+}
+
+set_CCU_SysVar(){
+	if [ "$1" != "" ]; then
+		Debugmsg1=$Debugmsg1"set_CCU_SysVar: http://$HOMEMATIC:8181/FritzBox.exe?Status=dom.GetObject%28%27$2%27%29.State%28%22$1%22%29 \n"
+		$cURL -s $cURL_timout "http://$HOMEMATIC:8181/FritzBox.exe?Status=dom.GetObject%28%27$2%27%29.State%28%22$1%22%29"	
+	else
+		Debugmsg1=$Debugmsg1"$IP -> set_CCU_SysVar: $3/$2 - Fehler, keine Status.\n"
+		logger -i -t $0 -p 3 "$IP -> set_CCU_SysVar: $3/$2 - Fehler, keine Status."
+	fi
+}
+
+set_CUxD_state(){
+	if [ "$1" != "" ]; then
+		Debugmsg1=$Debugmsg1"set_CUxD_state: http://$HOMEMATIC:8181/FritzBox.exe?Status=dom.GetObject%28%27CUxD.$2.SET_STATE%27%29.State%28%22$1%22%29 \n"
+		$cURL -s $cURL_timout "http://$HOMEMATIC:8181/FritzBox.exe?Status=dom.GetObject%28%27CUxD.$2.SET_STATE%27%29.State%28%22$1%22%29"	
+	else
+		Debugmsg1=$Debugmsg1"$IP -> set_CUxD_state: $3/$2 - Fehler, keine Status.\n"
+		logger -i -t $0 -p 3 "$IP -> set_CUxD_state: $3/$2 - Fehler, keine Status."
+	fi
+}
+
+#TR064
+SoapCFG(){
+    CT='Content-Type: text/xml; charset="utf-8"'
+    SoapURL="http://$IP:49000$location"
+    SoapParamString=""
+        if [ $# -eq 1 ]; then
+           SoapParamString="<$SoapParam>$1</$SoapParam>"
+        else
+           while [ $# -gt 1 ]
+           do
+              SoapParamString="$SoapParamString <$1>$2</$1>"
+              shift 2
+           done
+        fi
+    XML="<?xml version='1.0' encoding='utf-8'?> <s:Envelope s:encodingStyle='http://schemas.xmlsoap.org/soap/encoding/' xmlns:s='http://schemas.xmlsoap.org/soap/envelope/'> <s:Body> <u:$Action xmlns:u='$uri'>  $SoapParamString </u:$Action> </s:Body> </s:Envelope>"
+    Debugmsg2=$Debugmsg2"\nAufruf XML:\n$XML\n\n"
+    }
+
+set_TR064(){
+    # Aufruf:  set_TR064 ParamValue        der ParemeterName wird aus der globalen Variablen SoapParam genommen
+    #   oder:  set_TR064 ParamName1 ParamValue1 ParamName2 ParamValue2 ...
+    SoapCFG $*
+    $cURL -k $cURL_timout --anyauth -u "$user:$pwd" $SoapURL -H "$CT" -H "SoapAction:$uri#$Action" -d "$XML" -s
+ }
+       
+ get_TR064(){
+    # usage: get_TR064 ParamName1 ParamValue1 ParamName2 ParamValue2 ...
+	SoapCFG $*
+    TR064_temp=$($cURL -k $cURL_timout --anyauth -u "$user:$pwd" $SoapURL -H "$CT" -H "SoapAction:$uri#$Action" -d "$XML" -s )
+    Debugmsg2=$Debugmsg2"\nParameter TR064_temp:\n$TR064_temp\n\n"   
+ }
+
+
+get_Box_info(){
+location="/upnp/control/deviceinfo"
+uri="urn:dslforum-org:service:DeviceInfo:1"
+Action='GetInfo'
+SoapParam='NewDescription'
+get_TR064
+box=$(echo $TR064_temp | sed -n 's:.*<'$SoapParam'>\(.*\)</'$SoapParam'>.*:\1:p')
+}
+get_SID(){
+location="/upnp/control/deviceconfig"
+uri="urn:dslforum-org:service:DeviceConfig:1"
+Action='X_AVM-DE_CreateUrlSID'
+SoapParam='NewX_AVM-DE_UrlSID'
+get_TR064
+SID=$(echo $TR064_temp | sed -n 's:.*<'$SoapParam'>sid=\(.*\)</'$SoapParam'>.*:\1:p')
+Debugmsg2=$Debugmsg2"SID: $SID"	
+}
+
+Debugmsg1=$Debugmsg1"Befehl        : $0 $1 $2 $3 $4 \n"
