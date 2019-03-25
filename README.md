@@ -15,3 +15,4 @@ Some diskussions around TR-064 (source of the scripts)
 - https://github.com/nicoh88/cron_fritzbox-reboot
 - https://www.heise.de/select/ct/2019/5/softlinks/ysvw
 - https://www.ip-phone-forum.de/threads/tr-064-addportmapping-fritz-box-7490-113-07-01.302869/#post-2321834
+- https://www.pack-eis.de/index.php?p=avm_fritz_toolbox
