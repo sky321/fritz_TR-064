@@ -8,7 +8,7 @@ General documentation
 - Service Template 
 	- http://upnp.org/specs/gw/UPnP-gw-WANPPPConnection-v1-Service.pdf
 
-Some diskussions around TR-064 (source of the scripts)
+Some discussions around TR-064 (source of the scripts)
 - https://www.heise.de/forum/c-t/Kommentare-zu-c-t-Artikeln/Fritzbox-per-Skript-fernsteuern/AddPortMapping-mit-Python-funktioniert-nicht/posting-29394473/show/#posting_29394473
 - https://administrator.de/wissen/powershell-fritzbox-tr-064-netzwerk-konfigurieren-auslesen-303474.html
 - https://homematic-forum.de/forum/viewtopic.php?f=37&t=27994&sid=42f13af71db968632f43b95cab361a89
