@@ -77,10 +77,134 @@ def response_to_xml_dict(host, tag, para, out=True):
     tree = ElementTree.ElementTree(ElementTree.fromstring(xml)) 
     tag_dict = tree.getroot() 
     return tag_dict
-   
+
+
+# Security Port ermitteln - Standardport = 49443
+def getSecurityPort():
+    localpara = para.copy()
+    localpara['saction']    = "GetSecurityPort"
+    localpara['sservice']   = "urn:dslforum-org:service:DeviceInfo:1"
+    localpara['controlURL'] = "upnp/control/deviceinfo"
+    localpara['out_text']   = "SSL port:" 
+    localpara['outtag']     = "NewSecurityPort"
+    return response_to_xml_dict(host, 'Body', localpara)[0].find(localpara['outtag']).text
+# externe IP- Adresse abfragen
+def getExternalIPAddress():
+    localpara = para.copy()
+    localpara['saction']    = "GetExternalIPAddress"
+    localpara['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
+    localpara['controlURL'] = "upnp/control/wanpppconn1"
+    localpara['ret_text']   = "External IP Address:"
+    localpara['outtag']     = "NewExternalIPAddress"
+    return response_to_xml_dict(shost, 'Body', localpara)[0].find(localpara['outtag']).text
+
+
+# GetPortMappingNumberOfEntries abfragen     
+def getPortMappingNumberOfEntries():
+    localpara = para.copy()
+    localpara['saction']    = "GetPortMappingNumberOfEntries"
+    localpara['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
+    localpara['controlURL'] = "upnp/control/wanpppconn1"
+    localpara['ret_text']   = "Portmapping number of entries:"
+    localpara['outtag']     = "NewPortMappingNumberOfEntries"
+    return response_to_xml_dict(shost, 'Body', localpara)[0].find(localpara['outtag']).text
+        
+# GetGenericPortMappingEntry abfragen     
+def getGenericPortMappingEntry():
+    localpara = para.copy()
+    localpara['saction']    = "GetGenericPortMappingEntry"
+    localpara['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
+    localpara['controlURL'] = "upnp/control/wanpppconn1"
+    localpara['sparameter'] = """<NewPortMappingIndex>0</NewPortMappingIndex>"""
+    localpara['ret_text']   = "Portmapping entries[0]:"    
+    entries = {}
+    for e in response_to_xml_dict(shost, 'Body', localpara)[0]:
+        entries[e.tag] = e.text
+    return entries
+
+# Portmapping enable/disable    
+def addPortMapping(arg):
+    localpara = para.copy()
+    localpara['saction']    = "AddPortMapping"
+    localpara['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
+    localpara['controlURL'] = "upnp/control/wanpppconn1"
+    localpara['sparameter'] = """<NewRemoteHost>0.0.0.0</NewRemoteHost>
+        <NewExternalPort>80</NewExternalPort>
+        <NewProtocol>TCP</NewProtocol>
+        <NewInternalPort>80</NewInternalPort>
+        <NewInternalClient>192.168.01.100</NewInternalClient>
+        <NewPortMappingDescription>HTTP-Server</NewPortMappingDescription>
+        <NewLeaseDuration>0</NewLeaseDuration>
+        <NewEnabled>""" + arg + """</NewEnabled> """
+    localpara['ret_text']   = 'Portmapping:'
+    return response_to_xml_dict(shost, '', localpara, False)   
+
+# Anzahl der konfigurierten Rufumleitungen anzeigen        
+def getNumberOfDeflections():
+    localpara = para.copy()
+    localpara['saction']    = "GetNumberOfDeflections"
+    localpara['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
+    localpara['controlURL'] = "upnp/control/x_contact"
+    localpara['ret_text']   = "Anzahl Rufumleitungen:"
+    localpara['outtag']     = "NewNumberOfDeflections"
+    return response_to_xml_dict(shost, 'Body', localpara)[0].find(localpara['outtag']).text
+
+# Liste der Rufumleitungen anzeigen    
+def getDeflections():
+    localpara = para.copy()
+    localpara['saction']    = "GetDeflections"
+    localpara['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
+    localpara['controlURL'] = "upnp/control/x_contact"
+    localpara['ret_text']   = "Anzahl Rufumleitungen:"
+    entries = {}
+    for item in response_to_xml_dict(shost, 'List', localpara).getchildren(): 
+        for e in item:
+            entries[e.tag] = e.text
+    return entries
+    
+# Rufumleitung aktivieren/deaktivieren   
+def setDeflectionEnable(arg):
+    localpara = para.copy()
+    localpara['saction']    = "SetDeflectionEnable"
+    localpara['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"   
+    localpara['controlURL'] = "upnp/control/x_contact"
+    localpara['sparameter'] = """<NewDeflectionId>0</NewDeflectionId>
+        <NewEnable>""" + arg + """</NewEnable>"""
+    localpara['ret_text']   = "SetDeflectionEnable[0]:"
+    return response_to_xml_dict(shost, '', localpara, False)
+    
+# Telefonbuch exportieren   
+def getPhoneBook():
+    localpara = para.copy()
+    localpara['saction']    = "GetPhoneBook"
+    localpara['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
+    localpara['controlURL'] = "upnp/control/x_contact"
+    localpara['sparameter'] = """<NewPhonebookID>0</NewPhonebookID>""" 
+    localpara['ret_text']   = "Status Download:"    
+    url = response_to_xml_dict(shost, 'Body', localpara)[0].find('NewPhonebookURL').text
+    r = requests.get(url, verify = False)
+    if not r.ok:
+        return ''
+    return r.content   
+
+# Konfiguration exportieren 
+def getConfigFile():
+    localpara = para.copy()
+    localpara['saction']    = "X_AVM-DE_GetConfigFile"
+    localpara['sservice']   = "urn:dslforum-org:service:DeviceConfig:1"
+    localpara['controlURL'] = "upnp/control/deviceconfig"
+    localpara['sparameter'] = """<NewX_AVM-DE_Password>xxxx</NewX_AVM-DE_Password>"""    
+    localpara['ret_text']   = "Status Download:"    
+    localpara['outtag']     = "NewX_AVM-DE_ConfigFileUrl"
+    url = response_to_xml_dict(shost, 'Body', localpara)[0].find(localpara['outtag']).text
+    r = requests.get(url, auth = HTTPDigestAuth(localpara['user'], localpara['password']), verify = False)
+    if not r.ok:
+        return ''
+    return r.content   
+
+
 if __name__ == "__main__":   
     # ************************ main ********************************
-    # Security Port ermitteln - Standardport = 49443
     try:
         prog = sys.argv[1]
     except:
@@ -92,108 +216,62 @@ if __name__ == "__main__":
         arg = '0'
     if len(sys.argv) > 2:
         para['password'] = sys.argv[3]
-
+    
+    # Security Port ermitteln - Standardport = 49443
     if prog == '1':
-        para['saction']    = "GetSecurityPort"
-        para['sservice']   = "urn:dslforum-org:service:DeviceInfo:1"
-        para['controlURL'] = "upnp/control/deviceinfo"
-        para['out_text']   = "SSL port:" 
-        para['outtag']     = "NewSecurityPort"
-        print para['out_text'], response_to_xml_dict(host, 'Body', para)[0].find(para['outtag']).text
-
+        r = getSecurityPort()
+        print("SSL port: {}".format(r))
+    
     # externe IP- Adresse abfragen     
     elif prog == '2':
-        para['saction']    = "GetExternalIPAddress"
-        para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-        para['controlURL'] = "upnp/control/wanpppconn1"
-        para['ret_text']   = "External IP Address:"
-        para['outtag']     = "NewExternalIPAddress"
-        print para['ret_text'], response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
+        r = getExternalIPAddress()
+        print("External IP Address: {}".format(r))
         
     # GetPortMappingNumberOfEntries abfragen     
     elif prog == '3':
-        para['saction']    = "GetPortMappingNumberOfEntries"
-        para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-        para['controlURL'] = "upnp/control/wanpppconn1"
-        para['ret_text']   = "Portmapping number of entries:"
-        para['outtag']     = "NewPortMappingNumberOfEntries"
-        print para['ret_text'], response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
+        r= getPortMappingNumberOfEntries()
+        print("Portmapping number of entries: {}".format(r))
+
         
     # GetGenericPortMappingEntry abfragen     
     elif prog == '4':
-        para['saction']    = "GetGenericPortMappingEntry"
-        para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-        para['controlURL'] = "upnp/control/wanpppconn1"
-        para['sparameter'] = """<NewPortMappingIndex>0</NewPortMappingIndex>"""
-        para['ret_text']   = "Portmapping entries[0]:"    
-        print para['ret_text']
-        for e in response_to_xml_dict(shost, 'Body', para)[0]:
-            print "%s = %s" % (e.tag, e.text)
+        r = getGenericPortMappingEntry()  
+        print("Portmapping entries[0]:")
+        for k in r:
+            print("{} = {}".format(k,r[k]))
 
     # Portmapping enable/disable    
     elif prog == '5':
-        para['saction']    = "AddPortMapping"
-        para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-        para['controlURL'] = "upnp/control/wanpppconn1"
-        para['sparameter'] = """<NewRemoteHost>0.0.0.0</NewRemoteHost>
-            <NewExternalPort>80</NewExternalPort>
-            <NewProtocol>TCP</NewProtocol>
-            <NewInternalPort>80</NewInternalPort>
-            <NewInternalClient>192.168.01.100</NewInternalClient>
-            <NewPortMappingDescription>HTTP-Server</NewPortMappingDescription>
-            <NewLeaseDuration>0</NewLeaseDuration>
-            <NewEnabled>""" + arg + """</NewEnabled> """
-        para['ret_text']   = 'Portmapping:'
-        r = response_to_xml_dict(shost, '', para, False)   
-        print para['ret_text'], ('Enable' if arg == '1' else 'Disable'), ('ok' if r else 'Fehler')
+        r = addPortMapping(arg)  
+        print('Portmapping: {} {}'.format(('Enable' if arg == '1' else 'Disable'), ('ok' if r else 'Fehler')))
 
     # Anzahl der konfigurierten Rufumleitungen anzeigen        
     elif prog == '6':
-        para['saction']    = "GetNumberOfDeflections"
-        para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
-        para['controlURL'] = "upnp/control/x_contact"
-        para['ret_text']   = "Anzahl Rufumleitungen:"
-        para['outtag']     = "NewNumberOfDeflections"
-        print para['ret_text'],  response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
+        r = getNumberOfDeflections()
+        print("Anzahl Rufumleitungen: {}".format(r))
 
     # Liste der Rufumleitungen anzeigen    
     elif prog == '7':
-        para['saction']    = "GetDeflections"
-        para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
-        para['controlURL'] = "upnp/control/x_contact"
-        para['ret_text']   = "Anzahl Rufumleitungen:"
-        for item in response_to_xml_dict(shost, 'List', para).getchildren(): 
-            for e in item:
-                print "%s = %s" % (e.tag, e.text)
+        r = getDeflections()
+        for k in r:
+            print("{} = {}".format(k,r[k]))
     
     # Rufumleitung aktivieren/deaktivieren   
     elif prog == '8':
-        para['saction']    = "SetDeflectionEnable"
-        para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"   
-        para['controlURL'] = "upnp/control/x_contact"
-        para['sparameter'] = """<NewDeflectionId>0</NewDeflectionId>
-            <NewEnable>""" + arg + """</NewEnable>"""
-        para['ret_text']   = "SetDeflectionEnable[0]:"
-        r = response_to_xml_dict(shost, '', para, False)
-        print para['ret_text'],  ('Enable' if arg == '1' else 'Disable'), ('ok' if r else 'Fehler') 
+        r = setDeflectionEnable(arg)
+        print('SetDeflectionEnable[0]: {} {}'.format(('Enable' if arg == '1' else 'Disable'), ('ok' if r else 'Fehler')))
     
     # Telefonbuch exportieren   
     elif prog == '9':
-        para['saction']    = "GetPhoneBook"
-        para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
-        para['controlURL'] = "upnp/control/x_contact"
-        para['sparameter'] = """<NewPhonebookID>0</NewPhonebookID>""" 
-        para['ret_text']   = "Status Download:"    
-        url = response_to_xml_dict(shost, 'Body', para)[0].find('NewPhonebookURL').text
-        r = requests.get(url, verify = False)
-        if r.ok:
+        r = getPhoneBook()
+        if len(r) > 0:
             try:
                 f = open('./TelefonbuchFritzbox.xml', 'w')
-                f.write(r.content)
+                f.write(r)
                 f.close()
-                print para['ret_text'], ('ok' if r.ok else 'Fehler') 
+                print('Status Download: ok')
             except:
-                print 'Fehler beim Schreiben der Datei'
+                print('Fehler beim Schreiben der Datei')
                 sys.exit(1)            
 
     # Konfiguration exportieren 
@@ -206,20 +284,21 @@ if __name__ == "__main__":
         para['outtag']     = "NewX_AVM-DE_ConfigFileUrl"
         url = response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
         r = requests.get(url, auth = HTTPDigestAuth(para['user'], para['password']), verify = False)
-        if r.ok:
+        r = getConfigFile()
+        if len(r) > 0:
             try:
                 f = open('KonfiguratioFritzbox.xml', 'w')
-                f.write(r.content)
+                f.write(r)
                 f.close()
-                print para['ret_text'], ('ok' if r.ok else 'Fehler') 
+                print('Status Download: ok')
             except:
-                print 'Fehler beim Schreiben der Datei'
+                print('Fehler beim Schreiben der Datei')
                 sys.exit(1) 
         else:
-            print 'Fehler in Request!'
+            print('Fehler in Request!')
         
     # Funktionsnummer nicht definiert    
     else:
-        print 'Zum Parameter', prog, 'keine Funktion vorhanden!'
+        print('Zum Parameter {} keine Funktion vorhanden!'.format(prog))
 
     sys.exit(0)    
