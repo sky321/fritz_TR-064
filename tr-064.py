@@ -45,10 +45,10 @@ def post_soap(host, para):
                 auth    = HTTPDigestAuth(para['user'], para['password']),
                 verify  = False) 
     if DEBUG: 
-        print '\n1: Response Status=', response
-        print '\n2: sservice=', para['sservice']
-        print '\n3: saction:', para['saction']
-        print '\n4: soap=', build_soap(para['saction'], para['sservice'], para['sparameter'])
+        print('\n1: Response Status= {}'.format(response))
+        print('\n2: sservice= {}'.format(para['sservice']))
+        print('\n3: saction: {}'.format(para['saction']))
+        print('\n4: soap= {}'.format(build_soap(para['saction'], para['sservice'], para['sparameter'])))
     if not response.ok:
         return (False)   
     return response
@@ -58,22 +58,22 @@ def response_to_xml_dict(host, tag, para, out=True):
     response = post_soap(host, para)
     try:
         if not response.ok:
-            print 'HTTP-Fehler:', response
+            print('HTTP-Fehler: {}'.format(response))
             sys.exit(1)
     except:
-        print 'Fehler: kein gueltiger Rueckgabewert!'
+        print('Fehler: kein gueltiger Rueckgabewert!')
         sys.exit(1)   
     # bei out=False wird keine Ergebnisausgabe von der Aktion erwartet
     if not out: return response.ok  
-    if DEBUG: print '\n5: Response=', response.content    
+    if DEBUG: print('\n5: Response= {}'.format(response.content))  
     # Escapes und Namespaces umwandel/ausfiltern 
-    response = response.content.replace("&lt;", "<").replace("&gt;", ">")
+    response = response.content.decode('utf-8').replace("&lt;", "<").replace("&gt;", ">")
     response = response.replace("<s:", "<").replace("</s:", "</")
     response = response.replace("<u:", "<").replace("</u:", "</") 
     xml = '<?xml version="1.0" ?>'
     # Ergebnisblock ausfiltern. Das Ergebnis wird im Element 'tag' erwartet - immer 'Body' ausser bei Listen
     xml += response[response.find('<'+tag+'>'):response.find('</'+tag+'>')+len(tag)+3]
-    if DEBUG: print '\n6: XML=', xml    
+    if DEBUG: print('\n6: XML= {}'.format(xml))  
     tree = ElementTree.ElementTree(ElementTree.fromstring(xml)) 
     tag_dict = tree.getroot() 
     return tag_dict
@@ -208,7 +208,7 @@ if __name__ == "__main__":
     try:
         prog = sys.argv[1]
     except:
-        print 'TR-049.py [1..n] [0|1] erwartet.'
+        print('TR-049.py [1..n] [0|1] [password] erwartet.')
         sys.exit()
     try:
         arg = sys.argv[2]
