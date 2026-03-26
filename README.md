@@ -38,11 +38,18 @@ The service description is available at `http://fritz.box:49000/tr64desc.xml`.
 ## Quick Start
 
 ```bash
-# Edit credentials in tr-064.py (user/password in the 'para' dict)
-# or adapt the script to use environment variables, then:
+# Set credentials via environment or edit them in the script
+export FRITZ_USER="your_username"
+export FRITZ_PASS="your_password"
 
+# Named commands (Python 3 version)
 python3 tr-064.py external-ip
-python3 tr-064.py port-count
+python3 tr-064.py portmapping-count
+python3 tr-064.py export-phonebook
+
+# Legacy numeric arguments still work
+python3 tr-064.py 2        # same as external-ip
+python3 tr-064.py 3        # same as portmapping-count
 ```
 
 For the shell scripts (HomeMatic integration), edit `FB.cfg` with your FritzBox IP and credentials:
