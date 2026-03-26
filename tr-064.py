@@ -1,221 +1,487 @@
-#!/usr/bin/python
-# -*- coding: iso-8859-1 -*-import os
+#!/usr/bin/env python3
+"""
+TR-064 client for FRITZ!Box routers.
 
-import requests, sys, re
+Communicates with FRITZ!Box devices using the TR-064 SOAP protocol
+over HTTP(S) with digest authentication.
+
+Environment variables:
+    FRITZ_HOST         Hostname or IP (default: fritz.box)
+    FRITZ_PORT         HTTP port (default: 49000)
+    FRITZ_HTTPS_PORT   HTTPS port (default: 49443)
+    FRITZ_USER         Auth username (default: dslf-config)
+    FRITZ_PASS         Auth password (required for most operations)
+    FRITZ_CONFIG_PASS  Password for config export
+    FRITZ_DEBUG        Set to 1 for debug output
+
+Usage examples:
+    tr-064.py security-port
+    tr-064.py external-ip
+    tr-064.py portmapping-count
+    tr-064.py portmapping-entry
+    tr-064.py portmapping-toggle 1       # 1=enable, 0=disable
+    tr-064.py deflection-count
+    tr-064.py deflection-list
+    tr-064.py deflection-toggle 1        # 1=enable, 0=disable
+    tr-064.py export-phonebook
+    tr-064.py export-config
+
+Legacy numeric arguments (1-9, 14) are still supported for
+backward compatibility.
+"""
+
+import os
+import sys
+import argparse
+import xml.etree.ElementTree as ET
+
+import requests
 from requests.auth import HTTPDigestAuth
-import xml.etree.ElementTree as ElementTree
 
-DEBUG = 0
+# Suppress InsecureRequestWarning for self-signed certs
+import urllib3
+urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-para = {
-    'sservice'   : None,
-    'controlURL' : None,
-    'saction'    : None,
-    'sparameter' : '',   # leer, wenn keine IN- Parameter benoetigt werden
-    'outtag'     : None,
-    'ret_text'   : None,
-    'user'       : 'dslf-config',
-    'password'   : 'xxxxxxx'
+DEBUG = int(os.environ.get("FRITZ_DEBUG", "0"))
+
+FRITZ_HOST = os.environ.get("FRITZ_HOST", "fritz.box")
+FRITZ_PORT = int(os.environ.get("FRITZ_PORT", "49000"))
+FRITZ_USER = os.environ.get("FRITZ_USER", "dslf-config")
+FRITZ_PASS = os.environ.get("FRITZ_PASS", "")
+
+FRITZ_HTTPS_PORT = int(os.environ.get("FRITZ_HTTPS_PORT", "49443"))
+
+HTTP_URL = f"http://{FRITZ_HOST}:{FRITZ_PORT}/"
+HTTPS_URL = f"https://{FRITZ_HOST}:{FRITZ_HTTPS_PORT}/"
+
+
+def build_soap(action, service, parameter=""):
+    """Build a SOAP envelope for a TR-064 request."""
+    envelope = (
+        '<?xml version="1.0"?>'
+        '<s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"'
+        ' s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">'
+        "<s:Body>"
+        f'<u:{action} xmlns:u="{service}">'
+        f"{parameter}"
+        f"</u:{action}>"
+        "</s:Body>"
+        "</s:Envelope>"
+    )
+    return envelope.encode("utf-8")
+
+
+def post_soap(base_url, control_url, service, action, parameter=""):
+    """Send a SOAP request and return the response object."""
+    headers = {
+        "Content-Type": 'text/xml; charset="utf-8"',
+        "SOAPAction": f"{service}#{action}",
+    }
+    data = build_soap(action, service, parameter)
+
+    if DEBUG:
+        print(f"\n[DEBUG] URL: {base_url}{control_url}")
+        print(f"[DEBUG] Service: {service}")
+        print(f"[DEBUG] Action: {action}")
+        print(f"[DEBUG] SOAP body:\n{data.decode('utf-8')}")
+
+    response = requests.post(
+        url=f"{base_url}{control_url}",
+        headers=headers,
+        data=data,
+        auth=HTTPDigestAuth(FRITZ_USER, FRITZ_PASS),
+        verify=False,
+    )
+
+    if DEBUG:
+        print(f"[DEBUG] Response status: {response.status_code}")
+        print(f"[DEBUG] Response body:\n{response.text}")
+
+    return response
+
+
+def parse_soap_response(response, expect_output=True):
+    """
+    Parse a SOAP response and return the action-response element.
+
+    Returns the first child of <s:Body> (the action response element),
+    or None if expect_output is False.
+    """
+    if not response.ok:
+        print(f"HTTP error: {response.status_code} {response.reason}", file=sys.stderr)
+        try:
+            root = ET.fromstring(response.content)
+            fault = root.find(".//{http://schemas.xmlsoap.org/soap/envelope/}Fault")
+            if fault is not None:
+                faultstring = fault.findtext("faultstring", "")
+                detail = fault.findtext(".//errorDescription", "")
+                print(f"SOAP fault: {faultstring} {detail}", file=sys.stderr)
+        except ET.ParseError:
+            pass
+        sys.exit(1)
+
+    if not expect_output:
+        return None
+
+    root = ET.fromstring(response.content)
+
+    body = root.find("{http://schemas.xmlsoap.org/soap/envelope/}Body")
+    if body is None:
+        print("Error: Could not find SOAP Body in response", file=sys.stderr)
+        sys.exit(1)
+
+    action_response = list(body)
+    if not action_response:
+        print("Error: Empty SOAP Body", file=sys.stderr)
+        sys.exit(1)
+
+    return action_response[0]
+
+
+def parse_escaped_xml(text):
+    """
+    Parse XML that was escaped (entity-encoded) inside a SOAP response.
+
+    Some TR-064 responses embed XML lists as escaped text inside a tag.
+    ElementTree already unescapes entities when extracting .text, so
+    this just parses the resulting XML string.
+    """
+    try:
+        return ET.fromstring(text)
+    except ET.ParseError as e:
+        print(f"Error parsing embedded XML: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def find_tag_text(element, tag):
+    """Find a tag in the element (direct child or descendant) and return its text."""
+    # Direct child lookup
+    child = element.find(tag)
+    if child is not None:
+        return child.text
+
+    # Search all descendants, matching local name (ignoring namespace)
+    for el in element.iter():
+        local_name = el.tag.split("}")[-1] if "}" in el.tag else el.tag
+        if local_name == tag:
+            return el.text
+
+    return None
+
+
+# ---- Command implementations ----
+
+def cmd_security_port(_args):
+    """Get the HTTPS security port (default: 49443)."""
+    response = post_soap(
+        HTTP_URL,
+        "upnp/control/deviceinfo",
+        "urn:dslforum-org:service:DeviceInfo:1",
+        "GetSecurityPort",
+    )
+    result = parse_soap_response(response)
+    port = find_tag_text(result, "NewSecurityPort")
+    print(f"SSL port: {port}")
+
+
+def cmd_external_ip(_args):
+    """Get the external (WAN) IP address."""
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/wanpppconn1",
+        "urn:dslforum-org:service:WANPPPConnection:1",
+        "GetExternalIPAddress",
+    )
+    result = parse_soap_response(response)
+    ip = find_tag_text(result, "NewExternalIPAddress")
+    print(f"External IP Address: {ip}")
+
+
+def cmd_portmapping_count(_args):
+    """Get the number of port mapping entries."""
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/wanpppconn1",
+        "urn:dslforum-org:service:WANPPPConnection:1",
+        "GetPortMappingNumberOfEntries",
+    )
+    result = parse_soap_response(response)
+    count = find_tag_text(result, "NewPortMappingNumberOfEntries")
+    print(f"Port mapping number of entries: {count}")
+
+
+def cmd_portmapping_entry(_args):
+    """Get details of port mapping entry at index 0."""
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/wanpppconn1",
+        "urn:dslforum-org:service:WANPPPConnection:1",
+        "GetGenericPortMappingEntry",
+        "<NewPortMappingIndex>0</NewPortMappingIndex>",
+    )
+    result = parse_soap_response(response)
+    print("Port mapping entries[0]:")
+    for child in result:
+        tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+        print(f"  {tag} = {child.text}")
+
+
+def cmd_portmapping_toggle(args):
+    """Add/enable or disable a port mapping (arg: 1=enable, 0=disable)."""
+    toggle = args.toggle
+    parameter = (
+        "<NewRemoteHost>0.0.0.0</NewRemoteHost>"
+        "<NewExternalPort>80</NewExternalPort>"
+        "<NewProtocol>TCP</NewProtocol>"
+        "<NewInternalPort>80</NewInternalPort>"
+        "<NewInternalClient>192.168.1.100</NewInternalClient>"
+        "<NewPortMappingDescription>HTTP-Server</NewPortMappingDescription>"
+        "<NewLeaseDuration>0</NewLeaseDuration>"
+        f"<NewEnabled>{toggle}</NewEnabled>"
+    )
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/wanpppconn1",
+        "urn:dslforum-org:service:WANPPPConnection:1",
+        "AddPortMapping",
+        parameter,
+    )
+    ok = response.ok
+    action = "Enable" if toggle == "1" else "Disable"
+    status = "ok" if ok else "Fehler"
+    print(f"Portmapping: {action} {status}")
+    if not ok:
+        sys.exit(1)
+
+
+def cmd_deflection_count(_args):
+    """Get the number of configured call deflections."""
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/x_contact",
+        "urn:dslforum-org:service:X_AVM-DE_OnTel:1",
+        "GetNumberOfDeflections",
+    )
+    result = parse_soap_response(response)
+    count = find_tag_text(result, "NewNumberOfDeflections")
+    print(f"Anzahl Rufumleitungen: {count}")
+
+
+def cmd_deflection_list(_args):
+    """List all configured call deflections."""
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/x_contact",
+        "urn:dslforum-org:service:X_AVM-DE_OnTel:1",
+        "GetDeflections",
+    )
+    result = parse_soap_response(response)
+
+    # The deflection list is returned as escaped XML inside NewDeflectionList
+    deflection_text = find_tag_text(result, "NewDeflectionList")
+    if not deflection_text:
+        print("No deflections found.")
+        return
+
+    list_root = parse_escaped_xml(deflection_text)
+    for item in list_root:
+        for child in item:
+            tag = child.tag.split("}")[-1] if "}" in child.tag else child.tag
+            print(f"{tag} = {child.text}")
+        print()
+
+
+def cmd_deflection_toggle(args):
+    """Enable or disable call deflection 0 (arg: 1=enable, 0=disable)."""
+    toggle = args.toggle
+    parameter = (
+        "<NewDeflectionId>0</NewDeflectionId>"
+        f"<NewEnable>{toggle}</NewEnable>"
+    )
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/x_contact",
+        "urn:dslforum-org:service:X_AVM-DE_OnTel:1",
+        "SetDeflectionEnable",
+        parameter,
+    )
+    ok = response.ok
+    action = "Enable" if toggle == "1" else "Disable"
+    status = "ok" if ok else "Fehler"
+    print(f"SetDeflectionEnable[0]: {action} {status}")
+    if not ok:
+        sys.exit(1)
+
+
+def cmd_export_phonebook(_args):
+    """Export phone book to XML file."""
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/x_contact",
+        "urn:dslforum-org:service:X_AVM-DE_OnTel:1",
+        "GetPhoneBook",
+        "<NewPhonebookID>0</NewPhonebookID>",
+    )
+    result = parse_soap_response(response)
+    url = find_tag_text(result, "NewPhonebookURL")
+
+    if not url:
+        print("Error: No phone book URL in response", file=sys.stderr)
+        sys.exit(1)
+
+    r = requests.get(url, verify=False)
+    if not r.ok:
+        print(f"Error downloading phone book: {r.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    outfile = "TelefonbuchFritzbox.xml"
+    try:
+        with open(outfile, "w", encoding="utf-8") as f:
+            f.write(r.text)
+        print(f"Status Download: ok ({outfile})")
+    except IOError as e:
+        print(f"Error writing file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+def cmd_export_config(_args):
+    """Export FRITZ!Box configuration to file."""
+    config_pass = os.environ.get("FRITZ_CONFIG_PASS", "")
+    if not config_pass:
+        print(
+            "Error: Set FRITZ_CONFIG_PASS environment variable "
+            "to the config export password.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
+    response = post_soap(
+        HTTPS_URL,
+        "upnp/control/deviceconfig",
+        "urn:dslforum-org:service:DeviceConfig:1",
+        "X_AVM-DE_GetConfigFile",
+        f"<NewX_AVM-DE_Password>{config_pass}</NewX_AVM-DE_Password>",
+    )
+    result = parse_soap_response(response)
+    url = find_tag_text(result, "NewX_AVM-DE_ConfigFileUrl")
+
+    if not url:
+        print("Error: No config file URL in response", file=sys.stderr)
+        sys.exit(1)
+
+    r = requests.get(
+        url,
+        auth=HTTPDigestAuth(FRITZ_USER, FRITZ_PASS),
+        verify=False,
+    )
+    if not r.ok:
+        print(f"Error downloading config: {r.status_code}", file=sys.stderr)
+        sys.exit(1)
+
+    outfile = "KonfigurationFritzbox.xml"
+    try:
+        with open(outfile, "w", encoding="utf-8") as f:
+            f.write(r.text)
+        print(f"Status Download: ok ({outfile})")
+    except IOError as e:
+        print(f"Error writing file: {e}", file=sys.stderr)
+        sys.exit(1)
+
+
+# ---- Legacy numeric aliases (backward compatibility) ----
+
+LEGACY_MAP = {
+    "1": "security-port",
+    "2": "external-ip",
+    "3": "portmapping-count",
+    "4": "portmapping-entry",
+    "5": "portmapping-toggle",
+    "6": "deflection-count",
+    "7": "deflection-list",
+    "8": "deflection-toggle",
+    "9": "export-phonebook",
+    "14": "export-config",
 }
 
-host  = "http://fritz.box:49000/"
-shost = "https://fritz.box:49443/"
+COMMAND_FUNCS = {
+    "security-port": cmd_security_port,
+    "external-ip": cmd_external_ip,
+    "portmapping-count": cmd_portmapping_count,
+    "portmapping-entry": cmd_portmapping_entry,
+    "portmapping-toggle": cmd_portmapping_toggle,
+    "deflection-count": cmd_deflection_count,
+    "deflection-list": cmd_deflection_list,
+    "deflection-toggle": cmd_deflection_toggle,
+    "export-phonebook": cmd_export_phonebook,
+    "export-config": cmd_export_config,
+}
 
-try:
-    prog = sys.argv[1]
-except:
-    print 'TR-049.py [1..n] [0|1] erwartet.'
-    sys.exit()
-try:
-    arg = sys.argv[2]
-except:
-    arg = '0'
-  
-def build_soap (saction, sservice, sparam):
-    req = u"""<?xml version="1.0"?>
-        <s:Envelope xmlns:s="http://schemas.xmlsoap.org/soap/envelope/"
-        s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/">
-        <s:Body> 
-        <u:{action} xmlns:u={service}>
-        {parameter}
-        </u:{action}>
-        </s:Body>
-        </s:Envelope>""".format(action=saction, service='\"'+sservice+'\"', parameter=sparam)
-    return  req.encode('utf-8')
-   
-def post_soap(host, para):
-    headers = {"Content-Type":'text/xml; charset="utf-8"',
-               "SOAPAction": para['sservice']+'#'+para['saction']}
-    response = requests.post(
-                url     = host + para['controlURL'],
-                headers = headers,
-                data    = build_soap(para['saction'], para['sservice'], para['sparameter']),
-                auth    = HTTPDigestAuth(para['user'], para['password']),
-                verify  = False) 
-    if DEBUG: 
-        print '\n1: Response Status=', response
-        print '\n2: sservice=', para['sservice']
-        print '\n3: saction:', para['saction']
-        print '\n4: soap=', build_soap(para['saction'], para['sservice'], para['sparameter'])
-    if not response.ok:
-        return (False)   
-    return response
- 
-# Ergebnis der SOAP- Aktion aufbereiten 
-def response_to_xml_dict(host, tag, para, out=True):
-    response = post_soap(host, para)
-    try:
-        if not response.ok:
-            print 'HTTP-Fehler:', response
-            sys.exit(1)
-    except:
-        print 'Fehler: kein gueltiger Rueckgabewert!'
-        sys.exit(1)   
-    # bei out=False wird keine Ergebnisausgabe von der Aktion erwartet
-    if not out: return response.ok  
-    if DEBUG: print '\n5: Response=', response.content    
-    # Escapes und Namespaces umwandel/ausfiltern 
-    response = response.content.replace("&lt;", "<").replace("&gt;", ">")
-    response = response.replace("<s:", "<").replace("</s:", "</")
-    response = response.replace("<u:", "<").replace("</u:", "</") 
-    xml = '<?xml version="1.0" ?>'
-    # Ergebnisblock ausfiltern. Das Ergebnis wird im Element 'tag' erwartet - immer 'Body' ausser bei Listen
-    xml += response[response.find('<'+tag+'>'):response.find('</'+tag+'>')+len(tag)+3]
-    if DEBUG: print '\n6: XML=', xml    
-    tree = ElementTree.ElementTree(ElementTree.fromstring(xml)) 
-    tag_dict = tree.getroot() 
-    return tag_dict
-   
-   
-# ************************ main ********************************
-# Security Port ermitteln - Standardport = 49443
-if prog == '1':
-    para['saction']    = "GetSecurityPort"
-    para['sservice']   = "urn:dslforum-org:service:DeviceInfo:1"
-    para['controlURL'] = "upnp/control/deviceinfo"
-    para['out_text']   = "SSL port:" 
-    para['outtag']     = "NewSecurityPort"
-    print para['out_text'], response_to_xml_dict(host, 'Body', para)[0].find(para['outtag']).text
 
-# externe IP- Adresse abfragen     
-elif prog == '2':
-    para['saction']    = "GetExternalIPAddress"
-    para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-    para['controlURL'] = "upnp/control/wanpppconn1"
-    para['ret_text']   = "External IP Address:"
-    para['outtag']     = "NewExternalIPAddress"
-    print para['ret_text'], response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
-    
-# GetPortMappingNumberOfEntries abfragen     
-elif prog == '3':
-    para['saction']    = "GetPortMappingNumberOfEntries"
-    para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-    para['controlURL'] = "upnp/control/wanpppconn1"
-    para['ret_text']   = "Portmapping number of entries:"
-    para['outtag']     = "NewPortMappingNumberOfEntries"
-    print para['ret_text'], response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
-    
-# GetGenericPortMappingEntry abfragen     
-elif prog == '4':
-    para['saction']    = "GetGenericPortMappingEntry"
-    para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-    para['controlURL'] = "upnp/control/wanpppconn1"
-    para['sparameter'] = """<NewPortMappingIndex>0</NewPortMappingIndex>"""
-    para['ret_text']   = "Portmapping entries[0]:"    
-    print para['ret_text']
-    for e in response_to_xml_dict(shost, 'Body', para)[0]:
-        print "%s = %s" % (e.tag, e.text)
+def main():
+    parser = argparse.ArgumentParser(
+        description="TR-064 SOAP client for FRITZ!Box routers",
+        epilog=(
+            "environment variables:\n"
+            "  FRITZ_HOST         Hostname/IP (default: fritz.box)\n"
+            "  FRITZ_PORT         HTTP port (default: 49000)\n"
+            "  FRITZ_HTTPS_PORT   HTTPS port (default: 49443)\n"
+            "  FRITZ_USER         Username (default: dslf-config)\n"
+            "  FRITZ_PASS         Password\n"
+            "  FRITZ_CONFIG_PASS  Password for config export\n"
+            "  FRITZ_DEBUG        Set to 1 for debug output\n"
+            "\n"
+            "Legacy numeric arguments (1-9, 14) are supported for\n"
+            "backward compatibility with the original Python 2 script."
+        ),
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+    )
 
-# Portmapping enable/disable    
-elif prog == '5':
-    para['saction']    = "AddPortMapping"
-    para['sservice']   = "urn:dslforum-org:service:WANPPPConnection:1"
-    para['controlURL'] = "upnp/control/wanpppconn1"
-    para['sparameter'] = """<NewRemoteHost>0.0.0.0</NewRemoteHost>
-        <NewExternalPort>80</NewExternalPort>
-        <NewProtocol>TCP</NewProtocol>
-        <NewInternalPort>80</NewInternalPort>
-        <NewInternalClient>192.168.01.100</NewInternalClient>
-        <NewPortMappingDescription>HTTP-Server</NewPortMappingDescription>
-        <NewLeaseDuration>0</NewLeaseDuration>
-        <NewEnabled>""" + arg + """</NewEnabled> """
-    para['ret_text']   = 'Portmapping:'
-    r = response_to_xml_dict(shost, '', para, False)   
-    print para['ret_text'], ('Enable' if arg == '1' else 'Disable'), ('ok' if r else 'Fehler')
+    subparsers = parser.add_subparsers(dest="command", help="available commands")
 
-# Anzahl der konfigurierten Rufumleitungen anzeigen        
-elif prog == '6':
-    para['saction']    = "GetNumberOfDeflections"
-    para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
-    para['controlURL'] = "upnp/control/x_contact"
-    para['ret_text']   = "Anzahl Rufumleitungen:"
-    para['outtag']     = "NewNumberOfDeflections"
-    print para['ret_text'],  response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
+    subparsers.add_parser("security-port", help="Get HTTPS security port")
+    subparsers.add_parser("external-ip", help="Get external IP address")
+    subparsers.add_parser("portmapping-count", help="Get number of port mappings")
+    subparsers.add_parser("portmapping-entry", help="Get port mapping entry details")
 
-# Liste der Rufumleitungen anzeigen    
-elif prog == '7':
-    para['saction']    = "GetDeflections"
-    para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
-    para['controlURL'] = "upnp/control/x_contact"
-    para['ret_text']   = "Anzahl Rufumleitungen:"
-    for item in response_to_xml_dict(shost, 'List', para).getchildren(): 
-        for e in item:
-            print "%s = %s" % (e.tag, e.text)
-   
-# Rufumleitung aktivieren/deaktivieren   
-elif prog == '8':
-    para['saction']    = "SetDeflectionEnable"
-    para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"   
-    para['controlURL'] = "upnp/control/x_contact"
-    para['sparameter'] = """<NewDeflectionId>0</NewDeflectionId>
-        <NewEnable>""" + arg + """</NewEnable>"""
-    para['ret_text']   = "SetDeflectionEnable[0]:"
-    r = response_to_xml_dict(shost, '', para, False)
-    print para['ret_text'],  ('Enable' if arg == '1' else 'Disable'), ('ok' if r else 'Fehler') 
-   
-# Telefonbuch exportieren   
-elif prog == '9':
-    para['saction']    = "GetPhoneBook"
-    para['sservice']   = "urn:dslforum-org:service:X_AVM-DE_OnTel:1"
-    para['controlURL'] = "upnp/control/x_contact"
-    para['sparameter'] = """<NewPhonebookID>0</NewPhonebookID>""" 
-    para['ret_text']   = "Status Download:"    
-    url = response_to_xml_dict(shost, 'Body', para)[0].find('NewPhonebookURL').text
-    r = requests.get(url, verify = False)
-    if r.ok:
-        try:
-            f = open('./TelefonbuchFritzbox.xml', 'w')
-            f.write(r.content)
-            f.close()
-            print para['ret_text'], ('ok' if r.ok else 'Fehler') 
-        except:
-            print 'Fehler beim Schreiben der Datei'
-            sys.exit(1)            
+    pm_toggle = subparsers.add_parser(
+        "portmapping-toggle", help="Enable/disable port mapping"
+    )
+    pm_toggle.add_argument("toggle", choices=["0", "1"], help="0=disable, 1=enable")
 
-# Konfiguration exportieren 
-elif prog == '14':
-    para['saction']    = "X_AVM-DE_GetConfigFile"
-    para['sservice']   = "urn:dslforum-org:service:DeviceConfig:1"
-    para['controlURL'] = "upnp/control/deviceconfig"
-    para['sparameter'] = """<NewX_AVM-DE_Password>xxxx</NewX_AVM-DE_Password>"""    
-    para['ret_text']   = "Status Download:"    
-    para['outtag']     = "NewX_AVM-DE_ConfigFileUrl"
-    url = response_to_xml_dict(shost, 'Body', para)[0].find(para['outtag']).text
-    r = requests.get(url, auth = HTTPDigestAuth(para['user'], para['password']), verify = False)
-    if r.ok:
-        try:
-            f = open('KonfiguratioFritzbox.xml', 'w')
-            f.write(r.content)
-            f.close()
-            print para['ret_text'], ('ok' if r.ok else 'Fehler') 
-        except:
-            print 'Fehler beim Schreiben der Datei'
-            sys.exit(1) 
+    subparsers.add_parser("deflection-count", help="Get number of call deflections")
+    subparsers.add_parser("deflection-list", help="List call deflections")
+
+    df_toggle = subparsers.add_parser(
+        "deflection-toggle", help="Enable/disable call deflection"
+    )
+    df_toggle.add_argument("toggle", choices=["0", "1"], help="0=disable, 1=enable")
+
+    subparsers.add_parser("export-phonebook", help="Export phone book to XML file")
+    subparsers.add_parser("export-config", help="Export configuration to file")
+
+    # Translate legacy numeric arguments to named commands
+    if len(sys.argv) > 1 and sys.argv[1] in LEGACY_MAP:
+        sys.argv[1] = LEGACY_MAP[sys.argv[1]]
+
+    args = parser.parse_args()
+
+    if not args.command:
+        parser.print_help()
+        sys.exit(1)
+
+    if not FRITZ_PASS:
+        print(
+            "Warning: FRITZ_PASS not set. Set it via environment variable.",
+            file=sys.stderr,
+        )
+
+    cmd_func = COMMAND_FUNCS.get(args.command)
+    if cmd_func:
+        cmd_func(args)
     else:
-        print 'Fehler in Request!'
-    
-# Funktionsnummer nicht definiert    
-else:
-    print 'Zum Parameter', prog, 'keine Funktion vorhanden!'
+        parser.print_help()
+        sys.exit(1)
 
-sys.exit(0)    
+
+if __name__ == "__main__":
+    main()
