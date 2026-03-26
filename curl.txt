@@ -1,3 +1,103 @@
-curl -k --anyauth -u "USER:PASS" "http://fritz.box:49000/upnp/control/wanpppconn1" -H 'Content-Type: text/xml; charset="utf-8"' -H 'SOAPAction:urn:dslforum-org:service:WANPPPConnection:1#AddPortMapping' --data-binary @request.xml
+# Fritz!Box TR-064 curl examples
+#
+# TR-064 uses HTTP Digest Authentication. Do NOT use --anyauth with POST
+# requests — curl may fail to resend the request body after receiving the
+# 401 digest challenge. Always use --digest explicitly.
+#
+# Default TR-064 port: 49000 (HTTP), 49443 (HTTPS)
+# Replace USER:PASS with your Fritz!Box credentials (user account + password).
+# The old default user "dslf-config" no longer works on modern FritzOS —
+# use a real user account configured in the Fritz!Box admin UI.
 
-curl -k --anyauth -u "dslf-config:passwd" "https://fritz.box:49443/upnp/control/wanpppconn1" -H 'Content-Type: text/xml; charset="utf-8"' -H 'SOAPAction:urn:dslforum-org:service:WANPPPConnection:1#AddPortMapping' --data-binary @request.xml
+
+# --- Get external IP address ---
+
+curl --digest -u "USER:PASS" "http://fritz.box:49000/upnp/control/wanpppconn1" \
+  -H 'Content-Type: text/xml; charset="utf-8"' \
+  -H 'SOAPAction: urn:dslforum-org:service:WANPPPConnection:1#GetExternalIPAddress' \
+  -d '<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+            xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:GetExternalIPAddress xmlns:u="urn:dslforum-org:service:WANPPPConnection:1" />
+  </s:Body>
+</s:Envelope>'
+
+
+# --- Get device info (model, firmware version, serial number, etc.) ---
+
+curl --digest -u "USER:PASS" "http://fritz.box:49000/upnp/control/deviceinfo" \
+  -H 'Content-Type: text/xml; charset="utf-8"' \
+  -H 'SOAPAction: urn:dslforum-org:service:DeviceInfo:1#GetInfo' \
+  -d '<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+            xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:GetInfo xmlns:u="urn:dslforum-org:service:DeviceInfo:1" />
+  </s:Body>
+</s:Envelope>'
+
+
+# --- Force internet reconnect (get a new IP) ---
+
+curl --digest -u "USER:PASS" "http://fritz.box:49000/upnp/control/wanpppconn1" \
+  -H 'Content-Type: text/xml; charset="utf-8"' \
+  -H 'SOAPAction: urn:dslforum-org:service:WANPPPConnection:1#ForceTermination' \
+  -d '<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+            xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:ForceTermination xmlns:u="urn:dslforum-org:service:WANPPPConnection:1" />
+  </s:Body>
+</s:Envelope>'
+
+
+# --- Get number of port mappings ---
+
+curl --digest -u "USER:PASS" "http://fritz.box:49000/upnp/control/wanpppconn1" \
+  -H 'Content-Type: text/xml; charset="utf-8"' \
+  -H 'SOAPAction: urn:dslforum-org:service:WANPPPConnection:1#GetPortMappingNumberOfEntries' \
+  -d '<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+            xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:GetPortMappingNumberOfEntries xmlns:u="urn:dslforum-org:service:WANPPPConnection:1" />
+  </s:Body>
+</s:Envelope>'
+
+
+# --- Add a port mapping (e.g. TCP 8080 -> 192.168.178.20:80) ---
+
+curl --digest -u "USER:PASS" "http://fritz.box:49000/upnp/control/wanpppconn1" \
+  -H 'Content-Type: text/xml; charset="utf-8"' \
+  -H 'SOAPAction: urn:dslforum-org:service:WANPPPConnection:1#AddPortMapping' \
+  -d '<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+            xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:AddPortMapping xmlns:u="urn:dslforum-org:service:WANPPPConnection:1">
+      <NewRemoteHost></NewRemoteHost>
+      <NewExternalPort>8080</NewExternalPort>
+      <NewProtocol>TCP</NewProtocol>
+      <NewInternalPort>80</NewInternalPort>
+      <NewInternalClient>192.168.178.20</NewInternalClient>
+      <NewEnabled>1</NewEnabled>
+      <NewPortMappingDescription>My Web Server</NewPortMappingDescription>
+      <NewLeaseDuration>0</NewLeaseDuration>
+    </u:AddPortMapping>
+  </s:Body>
+</s:Envelope>'
+
+
+# --- Reboot the Fritz!Box ---
+
+curl --digest -u "USER:PASS" "http://fritz.box:49000/upnp/control/deviceconfig" \
+  -H 'Content-Type: text/xml; charset="utf-8"' \
+  -H 'SOAPAction: urn:dslforum-org:service:DeviceConfig:1#Reboot' \
+  -d '<?xml version="1.0" encoding="utf-8"?>
+<s:Envelope s:encodingStyle="http://schemas.xmlsoap.org/soap/encoding/"
+            xmlns:s="http://schemas.xmlsoap.org/soap/envelope/">
+  <s:Body>
+    <u:Reboot xmlns:u="urn:dslforum-org:service:DeviceConfig:1" />
+  </s:Body>
+</s:Envelope>'
